@@ -1,0 +1,442 @@
+{
+ "prompt": "Create a loan screening workflow for a financial institution. When a loan application is received, validate the data and enrich with credit information. Route applications based on loan amount\u2014standard loans go through regular screening, while large loans (>$250k) require enhanced screening. All applications need risk assessment and compliance checks. If compliance issues are found, request additional documentation. Every application must be reviewed by an underwriter before final decision. Log everything for regulatory audit.",
+ "requirements": [
+  {
+   "kind": "must_visit",
+   "step": "enhanced-screen",
+   "when": "amount > 250000",
+   "text": "Route applications based on loan amount\u2014standard loans go through regular screening, while large loans (>$250k) require enhanced screening."
+  },
+  {
+   "kind": "must_visit",
+   "step": "risk-check",
+   "text": "All applications need risk assessment and compliance checks."
+  },
+  {
+   "kind": "must_visit",
+   "step": "compliance",
+   "text": "All applications need risk assessment and compliance checks."
+  },
+  {
+   "kind": "must_visit",
+   "step": "additional-docs",
+   "when": "compliance == 'issues'",
+   "text": "If compliance issues are found, request additional documentation."
+  },
+  {
+   "kind": "must_visit",
+   "step": "underwriter",
+   "text": "Every application must be reviewed by an underwriter before final decision."
+  },
+  {
+   "kind": "before",
+   "first": "underwriter",
+   "text": "Every application must be reviewed by an underwriter before final decision."
+  },
+  {
+   "kind": "audit",
+   "text": "Log everything for regulatory audit."
+  }
+ ],
+ "unchecked": [],
+ "published_findings": [
+  {
+   "code": "UNBOUNDED_WAIT",
+   "nodes": [
+    "additional-docs"
+   ],
+   "detail": "'Request Documents' waits on a person with no timeout path: a case can stall forever, unlogged"
+  },
+  {
+   "code": "PII_EGRESS",
+   "nodes": [
+    "validate"
+   ],
+   "detail": "'Validate & Enrich' sends applicant_name, credit_report, ssn to a model not marked private (hosting unspecified)"
+  },
+  {
+   "code": "PII_EGRESS",
+   "nodes": [
+    "risk-check"
+   ],
+   "detail": "'Risk Assessment' sends credit_report to a model not marked private (hosting unspecified)"
+  }
+ ],
+ "assumed": [
+  "edge conditions: route 'amount > 250000' \u2192 Enhanced, else \u2192 Standard (literal reading of '>$250k')",
+  "compliance branch: compliance == 'issues' \u2192 Request Documents, else \u2192 Underwriter",
+  "'Request Documents' emails the applicant and waits for a reply (the page gives no timeout path)",
+  "model hosting for the two AI nodes is not shown; read as unspecified"
+ ],
+ "mutations": [
+  {
+   "name": "off-by-one",
+   "ask": "make loans of exactly 250k standard too\u2026 (written as two explicit branches)",
+   "expected": [
+    "BRANCH_GAP"
+   ],
+   "found": [
+    "BRANCH_GAP"
+   ],
+   "caught": true,
+   "exact": true,
+   "baseline": false,
+   "first": {
+    "code": "BRANCH_GAP",
+    "nodes": [
+     "route"
+    ],
+    "detail": "'Route by Loan Amount': no branch matches amount \u2208 [250,000, 250,000]",
+    "witness": {
+     "amount": 250000.0,
+     "compliance": "issues",
+     "customer": "existing"
+    },
+    "witness_text": "amount = 250,000, compliance = 'issues', customer = 'existing'"
+   }
+  },
+  {
+   "name": "overlap",
+   "ask": "standard screening up to 300k",
+   "expected": [
+    "BRANCH_OVERLAP",
+    "MISSING_STEP"
+   ],
+   "found": [
+    "BRANCH_OVERLAP",
+    "MISSING_STEP"
+   ],
+   "caught": true,
+   "exact": true,
+   "baseline": false,
+   "first": {
+    "code": "BRANCH_OVERLAP",
+    "nodes": [
+     "route"
+    ],
+    "detail": "'Route by Loan Amount': both 'amount > 250000' and 'amount <= 300000' match",
+    "witness": {
+     "amount": 300000.0,
+     "compliance": "issues",
+     "customer": "existing"
+    },
+    "witness_text": "amount = 300,000, compliance = 'issues', customer = 'existing'"
+   }
+  },
+  {
+   "name": "skip-underwriter-ok",
+   "ask": "if compliance is fine, complete straight away",
+   "expected": [
+    "MISSING_STEP"
+   ],
+   "found": [
+    "MISSING_STEP"
+   ],
+   "caught": true,
+   "exact": true,
+   "baseline": true,
+   "first": {
+    "code": "MISSING_STEP",
+    "nodes": [
+     "underwriter"
+    ],
+    "req": "Every application must be reviewed by an underwriter before final decision.",
+    "detail": "'Underwriter Review' is skipped on path Loan Application Received \u2192 Validate & Enrich \u2192 Route by Loan Amount \u2192 Enhanced Screening \u2192 Risk Assessment \u2192 Compliance Check \u2192 Log & Complete",
+    "witness": {
+     "amount": 250001.0,
+     "compliance": "ok",
+     "customer": "existing"
+    },
+    "witness_text": "amount = 250,001, compliance = 'ok', customer = 'existing'"
+   }
+  },
+  {
+   "name": "skip-risk-enhanced",
+   "ask": "enhanced loans go straight to compliance",
+   "expected": [
+    "MISSING_STEP"
+   ],
+   "found": [
+    "MISSING_STEP"
+   ],
+   "caught": true,
+   "exact": true,
+   "baseline": true,
+   "first": {
+    "code": "MISSING_STEP",
+    "nodes": [
+     "risk-check"
+    ],
+    "req": "All applications need risk assessment and compliance checks.",
+    "detail": "'Risk Assessment' is skipped on path Loan Application Received \u2192 Validate & Enrich \u2192 Route by Loan Amount \u2192 Enhanced Screening \u2192 Compliance Check \u2192 Request Documents \u2192 Underwriter Review \u2192 Log & Complete",
+    "witness": {
+     "amount": 250001.0,
+     "compliance": "issues",
+     "customer": "existing"
+    },
+    "witness_text": "amount = 250,001, compliance = 'issues', customer = 'existing'"
+   }
+  },
+  {
+   "name": "existing-customer-fastlane",
+   "ask": "existing customers skip enhanced screening",
+   "expected": [
+    "MISSING_STEP"
+   ],
+   "found": [
+    "MISSING_STEP"
+   ],
+   "caught": true,
+   "exact": true,
+   "baseline": false,
+   "first": {
+    "code": "MISSING_STEP",
+    "nodes": [
+     "enhanced-screen"
+    ],
+    "req": "Route applications based on loan amount\u2014standard loans go through regular screening, while large loans (>$250k) require enhanced screening.",
+    "detail": "'Enhanced Screening' is skipped on path Loan Application Received \u2192 Validate & Enrich \u2192 Route by Loan Amount \u2192 Standard Screening \u2192 Risk Assessment \u2192 Compliance Check \u2192 Request Documents \u2192 Underwriter Review \u2192 Log & Complete",
+    "witness": {
+     "amount": 250001.0,
+     "compliance": "issues",
+     "customer": "existing"
+    },
+    "witness_text": "amount = 250,001, compliance = 'issues', customer = 'existing'"
+   }
+  },
+  {
+   "name": "external-model",
+   "ask": "use GPT for risk scoring",
+   "expected": [
+    "PII_EGRESS"
+   ],
+   "found": [
+    "PII_EGRESS"
+   ],
+   "caught": true,
+   "exact": true,
+   "baseline": false,
+   "first": {
+    "code": "PII_EGRESS",
+    "nodes": [
+     "risk-check"
+    ],
+    "detail": "'Risk Assessment' sends credit_report to a model not marked private (external)"
+   }
+  },
+  {
+   "name": "slack-ssn",
+   "ask": "post each new application to #loans",
+   "expected": [
+    "PII_EGRESS"
+   ],
+   "found": [
+    "PII_EGRESS"
+   ],
+   "caught": true,
+   "exact": true,
+   "baseline": false,
+   "first": {
+    "code": "PII_EGRESS",
+    "nodes": [
+     "notify"
+    ],
+    "detail": "'Post to #loans' (slack) sends applicant_name, ssn outside"
+   }
+  },
+  {
+   "name": "no-final-log",
+   "ask": "drop the logging step, the DB is enough",
+   "expected": [
+    "AUDIT_GAP",
+    "UNREACHABLE"
+   ],
+   "found": [
+    "AUDIT_GAP",
+    "UNREACHABLE"
+   ],
+   "caught": true,
+   "exact": true,
+   "baseline": false,
+   "first": {
+    "code": "UNREACHABLE",
+    "nodes": [
+     "complete"
+    ],
+    "detail": "'Log & Complete' can never run"
+   }
+  },
+  {
+   "name": "no-timeout",
+   "ask": "remove the incomplete-application path",
+   "expected": [
+    "UNBOUNDED_WAIT"
+   ],
+   "found": [
+    "UNBOUNDED_WAIT"
+   ],
+   "caught": true,
+   "exact": true,
+   "baseline": false,
+   "first": {
+    "code": "UNBOUNDED_WAIT",
+    "nodes": [
+     "additional-docs"
+    ],
+    "detail": "'Request Documents' waits on a person with no timeout path: a case can stall forever, unlogged"
+   }
+  },
+  {
+   "name": "early-decision-email",
+   "ask": "email the applicant the decision after risk assessment",
+   "expected": [
+    "ORDER_VIOLATION"
+   ],
+   "found": [
+    "ORDER_VIOLATION"
+   ],
+   "caught": true,
+   "exact": true,
+   "baseline": true,
+   "first": {
+    "code": "ORDER_VIOLATION",
+    "nodes": [
+     "decision-email",
+     "underwriter"
+    ],
+    "req": "Every application must be reviewed by an underwriter before final decision.",
+    "detail": "'Email Decision' happens before 'Underwriter Review'",
+    "witness": {
+     "amount": 250001.0,
+     "compliance": "issues",
+     "customer": "existing"
+    },
+    "witness_text": "amount = 250,001, compliance = 'issues', customer = 'existing'"
+   }
+  },
+  {
+   "name": "integer-threshold",
+   "ask": "write it as >= 250001 (I first labelled this benign; amounts have cents)",
+   "expected": [
+    "MISSING_STEP"
+   ],
+   "found": [
+    "MISSING_STEP"
+   ],
+   "caught": true,
+   "exact": true,
+   "baseline": false,
+   "first": {
+    "code": "MISSING_STEP",
+    "nodes": [
+     "enhanced-screen"
+    ],
+    "req": "Route applications based on loan amount\u2014standard loans go through regular screening, while large loans (>$250k) require enhanced screening.",
+    "detail": "'Enhanced Screening' is skipped on path Loan Application Received \u2192 Validate & Enrich \u2192 Route by Loan Amount \u2192 Standard Screening \u2192 Risk Assessment \u2192 Compliance Check \u2192 Request Documents \u2192 Underwriter Review \u2192 Log & Complete",
+    "witness": {
+     "amount": 250000.5,
+     "compliance": "issues",
+     "customer": "existing"
+    },
+    "witness_text": "amount = 250,000.50, compliance = 'issues', customer = 'existing'"
+   }
+  },
+  {
+   "name": "orphan-step",
+   "ask": "add a fraud check (not wired in)",
+   "expected": [
+    "DEAD_END",
+    "UNREACHABLE"
+   ],
+   "found": [
+    "DEAD_END",
+    "UNREACHABLE"
+   ],
+   "caught": true,
+   "exact": true,
+   "baseline": false,
+   "first": {
+    "code": "UNREACHABLE",
+    "nodes": [
+     "fraud"
+    ],
+    "detail": "'Fraud Check' can never run"
+   }
+  },
+  {
+   "name": "unbounded-loop",
+   "ask": "if documents are still missing, ask again",
+   "expected": [
+    "CYCLE"
+   ],
+   "found": [
+    "CYCLE"
+   ],
+   "caught": true,
+   "exact": true,
+   "baseline": false,
+   "first": {
+    "code": "CYCLE",
+    "nodes": [
+     "compliance",
+     "additional-docs"
+    ],
+    "detail": "loop Compliance Check \u2192 Request Documents \u2192 Compliance Check has no iteration limit"
+   }
+  }
+ ],
+ "benign": [
+  {
+   "name": "rename",
+   "ask": "call it 'Senior Review'",
+   "found": []
+  },
+  {
+   "name": "explicit-branches",
+   "ask": "spell out both branches",
+   "found": []
+  },
+  {
+   "name": "slack-no-pii",
+   "ask": "post the loan id to #loans",
+   "found": []
+  },
+  {
+   "name": "private-summary",
+   "ask": "add an AI summary for the underwriter",
+   "found": []
+  },
+  {
+   "name": "extra-review-1m",
+   "ask": "loans over 1M also need a credit committee",
+   "found": []
+  },
+  {
+   "name": "bounded-retry",
+   "ask": "ask for documents up to 2 times",
+   "found": []
+  },
+  {
+   "name": "extra-log",
+   "ask": "also log after screening",
+   "found": []
+  }
+ ],
+ "caught": 13,
+ "baseline": 3,
+ "diff_edit": "existing customers skip enhanced screening",
+ "diff": [
+  {
+   "change": "no longer guaranteed",
+   "step": "Enhanced Screening",
+   "inputs": 4,
+   "example": "amount = 250,000.50, compliance = 'ok', customer = 'existing'"
+  },
+  {
+   "change": "now always runs",
+   "step": "Standard Screening",
+   "inputs": 4,
+   "example": "amount = 250,000.50, compliance = 'ok', customer = 'existing'"
+  }
+ ]
+}

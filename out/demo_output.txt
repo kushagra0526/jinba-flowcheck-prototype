@@ -1,0 +1,53 @@
+
+== Requirements read from the prompt on jinba.io/uses/loan-screening
+   must_visit enhanced-screen  amount > 250000        ← Route applications based on loan amount—standard loans go through regu
+   must_visit risk-check                              ← All applications need risk assessment and compliance checks.
+   must_visit compliance                              ← All applications need risk assessment and compliance checks.
+   must_visit additional-docs  compliance == 'issues' ← If compliance issues are found, request additional documentation.
+   must_visit underwriter                             ← Every application must be reviewed by an underwriter before final deci
+   before     underwriter                             ← Every application must be reviewed by an underwriter before final deci
+   audit                                              ← Log everything for regulatory audit.
+   not checked: none
+
+== Published graph: questions for the builder (policy: PII only to private models)
+   UNBOUNDED_WAIT  'Request Documents' waits on a person with no timeout path: a case can stall forever, unlogged
+   PII_EGRESS      'Validate & Enrich' sends applicant_name, credit_report, ssn to a model not marked private (hosting unspecified)
+   PII_EGRESS      'Risk Assessment' sends credit_report to a model not marked private (hosting unspecified)
+   assumed (not visible on the page): edge conditions: route 'amount > 250000' → Enhanced, else → Standard (literal reading of '>$250k'); compliance branch: compliance == 'issues' → Request Documents, else → Underwriter; 'Request Documents' emails the applicant and waits for a reply (the page gives no timeout path); model hosting for the two AI nodes is not shown; read as unspecified
+
+== 13 chat edits applied to a clean version of the same flow
+   ✓ off-by-one               BRANCH_GAP                       sample-run: missed
+       'Route by Loan Amount': no branch matches amount ∈ [250,000, 250,000]  [amount = 250,000, compliance = 'issues', customer = 'existing']
+   ✓ overlap                  BRANCH_OVERLAP, MISSING_STEP     sample-run: missed
+       'Route by Loan Amount': both 'amount > 250000' and 'amount <= 300000' match  [amount = 300,000, compliance = 'issues', customer = 'existing']
+   ✓ skip-underwriter-ok      MISSING_STEP                     sample-run: caught
+       'Underwriter Review' is skipped on path Loan Application Received → Validate & Enrich → Route by Loan Amount →  [amount = 250,001, compliance = 'ok', customer = 'existing']
+   ✓ skip-risk-enhanced       MISSING_STEP                     sample-run: caught
+       'Risk Assessment' is skipped on path Loan Application Received → Validate & Enrich → Route by Loan Amount → En  [amount = 250,001, compliance = 'issues', customer = 'existing']
+   ✓ existing-customer-fastlane MISSING_STEP                     sample-run: missed
+       'Enhanced Screening' is skipped on path Loan Application Received → Validate & Enrich → Route by Loan Amount →  [amount = 250,001, compliance = 'issues', customer = 'existing']
+   ✓ external-model           PII_EGRESS                       sample-run: missed
+       'Risk Assessment' sends credit_report to a model not marked private (external)
+   ✓ slack-ssn                PII_EGRESS                       sample-run: missed
+       'Post to #loans' (slack) sends applicant_name, ssn outside
+   ✓ no-final-log             AUDIT_GAP, UNREACHABLE           sample-run: missed
+       'Log & Complete' can never run
+   ✓ no-timeout               UNBOUNDED_WAIT                   sample-run: missed
+       'Request Documents' waits on a person with no timeout path: a case can stall forever, unlogged
+   ✓ early-decision-email     ORDER_VIOLATION                  sample-run: caught
+       'Email Decision' happens before 'Underwriter Review'  [amount = 250,001, compliance = 'issues', customer = 'existing']
+   ✓ integer-threshold        MISSING_STEP                     sample-run: missed
+       'Enhanced Screening' is skipped on path Loan Application Received → Validate & Enrich → Route by Loan Amount →  [amount = 250,000.50, compliance = 'issues', customer = 'existing']
+   ✓ orphan-step              DEAD_END, UNREACHABLE            sample-run: missed
+       'Fraud Check' can never run
+   ✓ unbounded-loop           CYCLE                            sample-run: missed
+       loop Compliance Check → Request Documents → Compliance Check has no iteration limit
+
+   benign edits flagged: 0 of 7
+   flowcheck 13/13 · sample-run test 3/13
+
+== Edit explained: "existing customers skip enhanced screening"
+   no longer guaranteed: Enhanced Screening  (e.g. amount = 250,000.50, compliance = 'ok', customer = 'existing')
+   now always runs: Standard Screening  (e.g. amount = 250,000.50, compliance = 'ok', customer = 'existing')
+
+wrote out/report.html, out/report.json
